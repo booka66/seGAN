@@ -1,2 +1,7 @@
 venv/
 raw_data/
+.DS_Store
+__pycache__/
+*csv
+*brw
+*h5
