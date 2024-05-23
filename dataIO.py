@@ -59,7 +59,8 @@ def get_data(file_path):
         )
 
         end_time_1 = perf_counter()
-        print(f"State extraction complete in {end_time_1 - start_time_1} seconds")
+        print(
+            f"State extraction complete in {end_time_1 - start_time_1} seconds")
 
         total_channels = int(total_channels)
         sampling_rate = float(sampling_rate)
@@ -73,7 +74,8 @@ def get_data(file_path):
 
         rows, cols = get_channels(file_path)
         active_channels = list(zip(rows, cols))
-        zero_indexed_active_channels = [(r - 1, c - 1) for r, c in active_channels]
+        zero_indexed_active_channels = [
+            (r - 1, c - 1) for r, c in active_channels]
 
         return (
             data,
@@ -109,9 +111,11 @@ def save_channel_data(
             channel_group.create_dataset(
                 "SzEventsTimes", data=channel_info["SzEventsTimes"]
             )
-            channel_group.create_dataset("SE_List", data=channel_info["SE_List"])
+            channel_group.create_dataset(
+                "SE_List", data=channel_info["SE_List"])
             channel_group.create_dataset("samplingRate", data=sampling_rate)
-            channel_group.create_dataset("recordingLength", data=recording_length)
+            channel_group.create_dataset(
+                "recordingLength", data=recording_length)
 
     print(f"Channel dataset saved to {output_file}")
 
@@ -127,7 +131,7 @@ def get_active_channels(file_path):
     return active_channels
 
 
-def load_channel_data(file_path: str, row: int, col: int) -> tuple or None:
+def load_channel_data(file_path: str, row: int, col: int):
     """
     Loads channel data from a given file path for a specific row and column.
 
@@ -153,6 +157,7 @@ def load_channel_data(file_path: str, row: int, col: int) -> tuple or None:
         if channel_key in f:
             channel_group = f[channel_key]
             signal = channel_group["signal"][:]
+            signal = [x[0] for x in signal]
             seizures = channel_group["SzEventsTimes"][()]
             se = channel_group["SE_List"][()]
             return signal, seizures, se

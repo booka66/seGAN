@@ -82,34 +82,34 @@ class LSTMGANAnomalyDetector:
 
     def train(self, X_train, epochs, batch_size):
         for epoch in range(epochs):
-            for _ in range(X_train.shape[0] // batch_size):
-                # Train the discriminator
-                real_batch = X_train[
-                    np.random.randint(0, X_train.shape[0], size=batch_size)
-                ]
-                noise = np.random.normal(
-                    0, 1, (batch_size, self.input_shape[0], self.input_shape[1])
-                )
-                generated_batch = self.generator.predict(noise)
+            # Train the discriminator
+            real_batch = X_train[
+                np.random.randint(0, X_train.shape[0], size=batch_size)
+            ]
+            noise = np.random.normal(
+                0, 1, (batch_size, self.input_shape[0], self.input_shape[1])
+            )
+            generated_batch = self.generator.predict(noise)
 
-                X = np.concatenate([real_batch, generated_batch])
-                y_dis = np.zeros(2 * batch_size)
-                y_dis[:batch_size] = 0.9  # One-sided label smoothing
+            X = np.concatenate([real_batch, generated_batch])
+            y_dis = np.zeros(2 * batch_size)
+            y_dis[:batch_size] = 0.9  # One-sided label smoothing
 
-                self.discriminator.trainable = True
-                self.discriminator.train_on_batch(X, y_dis)
+            self.discriminator.trainable = True
+            self.discriminator.train_on_batch(X, y_dis)
 
-                # Train the generator
-                noise = np.random.normal(
-                    0, 1, (batch_size, self.input_shape[0], self.input_shape[1])
-                )
-                y_gen = np.ones(batch_size)
+            # Train the generator
+            noise = np.random.normal(
+                0, 1, (batch_size, self.input_shape[0], self.input_shape[1])
+            )
+            y_gen = np.ones(batch_size)
 
-                self.discriminator.trainable = False
-                self.generator.train_on_batch(noise, y_gen)
+            self.discriminator.trainable = False
+            self.generator.train_on_batch(noise, y_gen)
 
             # Print progress
-            print(f"Epoch: {epoch + 1}/{epochs}")
+            if epoch % 100 == 0:
+                print(f"Epoch: {epoch}")
 
     def detect_anomalies(self, X_test, beta, threshold):
         generated_data = self.generator.predict(X_test)
@@ -130,7 +130,6 @@ class LSTMGANAnomalyDetector:
 window_size = 100  # Specify the window size for segmenting the signal
 num_features = 1  # Specify the number of features in the signal
 stride = 50  # Specify the stride for sliding the window
-batch_size = 32
 
 input_shape = (window_size, num_features)  # Specify your input shape
 anomaly_detector = LSTMGANAnomalyDetector(input_shape)
@@ -161,11 +160,6 @@ y_train = np.array(y_train)
 
 # Reshape the data if necessary
 X_train = X_train.reshape((X_train.shape[0], X_train.shape[1], num_features))
-
-# Ensure there are enough samples to train
-if X_train.shape[0] < batch_size:
-    print("Not enough training data.")
-    sys.exit(1)
 
 # Train the model
 epochs = 10
