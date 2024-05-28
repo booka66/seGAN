@@ -5,7 +5,7 @@ from torch.utils.data import DataLoader, TensorDataset
 from tqdm import tqdm
 from dataIO import load_channel_data, get_active_channels
 
-torch.device("mps")
+device = torch.device("mps")
 
 
 class DepthwiseConv1d(nn.Module):
@@ -131,19 +131,22 @@ def train_model(
     num_channels = len(active_channels)
 
     X = create_dataset(signals, segment_length)
+    X = X.to(device)
     print(f"Data shape: {X.shape}")
 
     dataset = TensorDataset(X)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
-    model = EEGformerAutoencoder(num_channels, segment_length)
+    model = EEGformerAutoencoder(num_channels, segment_length).to(device)
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
     print("Training model...")
-    for epoch in tqdm(range(num_epochs)):
+    pbar = tqdm(total=num_epochs)
+    for epoch in range(num_epochs):
         running_loss = 0.0
         for i, (inputs,) in enumerate(dataloader):
+            inputs = inputs.to(device)
             optimizer.zero_grad()
 
             outputs = model(inputs)
@@ -151,11 +154,15 @@ def train_model(
             loss.backward()
             optimizer.step()
 
-            print(f"Loss: {loss.item()}")
             running_loss += loss.item()
+            pbar.set_description(
+                f"Epoch [{epoch+1}/{num_epochs}], Loss: {loss.item():.4f} Progress: {i+1}/{len(dataloader)}"
+            )
 
         epoch_loss = running_loss / len(dataloader)
-        print(f"Epoch [{epoch+1}/{num_epochs}], Loss: {epoch_loss:.4f}")
+        pbar.set_postfix({"Loss": epoch_loss})
+        pbar.update(1)
+    pbar.close()
 
     return model
 
@@ -166,12 +173,14 @@ def save_model(model, save_path):
 
 def load_model(model_class, model_path, num_channels, segment_length):
     model = model_class(num_channels, segment_length)
-    model.load_state_dict(torch.load(model_path))
+    model.load_state_dict(torch.load(model_path, map_location=device))
+    model.to(device)
     model.eval()
     return model
 
 
 def detect_anomalies(model, data, threshold):
+    data = data.to(device)
     with torch.no_grad():
         reconstructed_data = model(data)
         reconstruction_errors = torch.mean((data - reconstructed_data) ** 2, dim=(1, 2))
@@ -179,33 +188,31 @@ def detect_anomalies(model, data, threshold):
     return anomalies
 
 
-file_path = (
-    "/Users/booka66/seGAN/mv_data/Slice3_0Mg_13-9-20_resample_100_channel_data.h5"
-)
-active_channels = get_active_channels(file_path)
-num_channels = len(active_channels)
-print(f"Number of active channels: {num_channels}")
-segment_length = 50
-num_epochs = 10
-batch_size = 32
-learning_rate = 0.001
+def main():
+    file_path = (
+        "/Users/booka66/seGAN/mv_data/Slice3_0Mg_13-9-20_resample_100_channel_data.h5"
+    )
+    active_channels = get_active_channels(file_path)
+    num_channels = len(active_channels)
+    print(f"Number of active channels: {num_channels}")
+    segment_length = 50
+    num_epochs = 10
+    batch_size = 32
+    learning_rate = 0.001
 
-trained_model = train_model(
-    file_path, active_channels, segment_length, num_epochs, batch_size, learning_rate
-)
+    trained_model = train_model(
+        file_path,
+        active_channels,
+        segment_length,
+        num_epochs,
+        batch_size,
+        learning_rate,
+    )
 
-model_save_path = "eegformer_autoencoder.pth"
-save_model(trained_model, model_save_path)
+    model_save_path = "eegformer_autoencoder.pth"
+    save_model(trained_model, model_save_path)
+    print(f"Model saved to {model_save_path}")
 
-num_channels = len(active_channels)
-loaded_model = load_model(
-    EEGformerAutoencoder, model_save_path, num_channels, segment_length
-)
 
-new_signals = load_data(
-    "/Users/booka66/seGAN/mv_data/Slice1_0Mg_05-03-21_GUI_resample_100_channel_data.h5",
-    active_channels,
-)
-new_data = create_dataset(new_signals, segment_length)
-anomaly_threshold = 0.1
-anomalies = detect_anomalies(loaded_model, new_data, anomaly_threshold)
+if __name__ == "__main__":
+    main()
