@@ -195,8 +195,8 @@ def load_channel_data(file_path: str, row: int, col: int):
             sampling_rate = channel_group["samplingRate"][()]
             return signal, seizures, se, recording_length, sampling_rate
         else:
-            print(f"Channel ({row}, {col}) not found in the dataset.")
-            return None
+            # print(f"Channel ({row}, {col}) not found in the dataset.")
+            return None, None, None, None, None
 
 
 if __name__ == "__main__":

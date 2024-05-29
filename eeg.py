@@ -4,13 +4,14 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 from tqdm import tqdm
 from dataIO import (
+    get_active_channels,
     keep_trace,
     load_channel_data,
-    get_active_channels,
     get_baseline,
 )
 from visualize_signals import plot_signal
 import numpy as np
+from progress_table import ProgressTable
 
 device = torch.device("mps")
 
@@ -18,9 +19,11 @@ device = torch.device("mps")
 class DepthwiseConv1d(nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, padding=0):
         super(DepthwiseConv1d, self).__init__()
+        # Ensure out_channels is divisible by in_channels
+        self.out_channels = (out_channels // in_channels) * in_channels
         self.depthwise = nn.Conv1d(
             in_channels,
-            out_channels,
+            self.out_channels,
             kernel_size=kernel_size,
             padding=padding,
             groups=in_channels,
@@ -44,9 +47,9 @@ class TransformerEncoder(nn.Module):
 
 
 class EEGformerAutoencoder(nn.Module):
-    def __init__(self, num_channels, segment_length):
+    def __init__(self, segment_length):
         super(EEGformerAutoencoder, self).__init__()
-        hidden_channels = num_channels * 2
+        hidden_channels = 128  # Fixed number of hidden channels
         nhead = find_factor(hidden_channels)
         print(f"Hidden channels: {hidden_channels}, nhead: {nhead}")
         assert (
@@ -54,7 +57,7 @@ class EEGformerAutoencoder(nn.Module):
         ), "hidden_channels must be divisible by nhead"
 
         self.encoder = nn.Sequential(
-            DepthwiseConv1d(num_channels, hidden_channels, 10),
+            nn.Conv1d(1, hidden_channels, 10),  # Use 1 input channel
             DepthwiseConv1d(hidden_channels, hidden_channels, 10),
             DepthwiseConv1d(hidden_channels, hidden_channels, 10),
         )
@@ -84,7 +87,7 @@ class EEGformerAutoencoder(nn.Module):
         self.decoder = nn.Sequential(
             nn.ConvTranspose1d(hidden_channels, hidden_channels, 10),
             nn.ConvTranspose1d(hidden_channels, hidden_channels, 10),
-            nn.ConvTranspose1d(hidden_channels, num_channels, 10),
+            nn.ConvTranspose1d(hidden_channels, 1, 10),  # Use 1 output channel
         )
 
     def forward(self, x):
@@ -115,7 +118,6 @@ def load_data(file_path, active_channels):
                 signal, seizures, recording_length
             )
             if keep_trace(baseline_signal, 0.06):
-                # plot_signal(baseline_signal, seizures, new_recording_length)
                 signals.append(baseline_signal)
     return signals
 
@@ -142,9 +144,6 @@ def create_dataset(signals, segment_length, max_length):
             X.append(segment)
     X = np.array(X, dtype=np.float32)
     X = torch.from_numpy(X)
-    num_channels = len(signals)
-    num_segments = len(X) // num_channels
-    X = X.view(num_segments, num_channels, segment_length)
     return X
 
 
@@ -155,23 +154,26 @@ def train_model(
     print(f"Segment length: {segment_length}, Number of epochs: {num_epochs}")
     print(f"Batch size: {batch_size}, Learning rate: {learning_rate}")
     signals = load_data(file_path, active_channels)
-    num_channels = len(signals)
+    num_signals = len(signals)
 
     signals, max_length = pad_signals(signals, segment_length)
     X = create_dataset(signals, segment_length, max_length)
+    X = X.unsqueeze(1)  # Add a channel dimension
     X = X.to(device)
-    print(f"New number of signals: {len(signals)}")
+    print(f"Number of signals: {num_signals}")
 
     dataset = TensorDataset(X)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
-    model = EEGformerAutoencoder(num_channels, segment_length).to(device)
+    model = EEGformerAutoencoder(segment_length).to(device)
     criterion = nn.MSELoss()
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
     print("Training model...")
-    pbar = tqdm(total=num_epochs)
+    table = ProgressTable(["Epoch", "Step"])
+    table.add_column("Loss")
     for epoch in range(num_epochs):
+        table["Epoch"] = f"{epoch+1}/{num_epochs}"
         running_loss = 0.0
         for i, (inputs,) in enumerate(dataloader):
             inputs = inputs.to(device)
@@ -183,14 +185,11 @@ def train_model(
             optimizer.step()
 
             running_loss += loss.item()
-            pbar.set_description(
-                f"Epoch [{epoch+1}/{num_epochs}], Loss: {loss.item():.4f} Progress: {i+1}/{len(dataloader)}"
-            )
+            table["Step"] = f"{i+1}/{len(dataloader)}"
+            table["Loss"] = loss.item()
 
-        epoch_loss = running_loss / len(dataloader)
-        pbar.set_postfix({"Loss": epoch_loss})
-        pbar.update(1)
-    pbar.close()
+        table.next_row()
+    table.close()
 
     return model
 
@@ -199,8 +198,8 @@ def save_model(model, save_path):
     torch.save(model.state_dict(), save_path)
 
 
-def load_model(model_class, model_path, num_channels, segment_length):
-    model = model_class(num_channels, segment_length)
+def load_model(model_class, model_path, segment_length):
+    model = model_class(segment_length)
     model.load_state_dict(torch.load(model_path, map_location=device))
     model.to(device)
     model.eval()
@@ -216,11 +215,19 @@ def detect_anomalies(model, data, threshold):
     return anomalies
 
 
+def detect_seizures(model, segment, threshold):
+    segment = torch.from_numpy(segment).float().unsqueeze(0).unsqueeze(0).to(device)
+    with torch.no_grad():
+        reconstructed_segment = model(segment)
+        reconstruction_error = torch.mean((segment - reconstructed_segment) ** 2)
+        is_seizure = reconstruction_error > threshold
+    return is_seizure.item()
+
+
 def main():
     file_path = "./mv_data/Slice3_0Mg_13-9-20_resample_100_channel_data.h5"
     active_channels = get_active_channels(file_path)
-    num_channels = len(active_channels)
-    print(f"Number of active channels: {num_channels}")
+    print(f"Number of active channels: {len(active_channels)}")
     segment_length = 50
     num_epochs = 10
     batch_size = 32
