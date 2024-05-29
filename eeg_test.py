@@ -19,7 +19,7 @@ num_channels = len(active_channels)
 print(f"Number of active channels: {num_channels}")
 
 segment_length = 50
-seizure_threshold = 0.001
+seizure_threshold = 0.0005
 
 loaded_model = load_model(EEGformerAutoencoder, model_save_path, segment_length)
 
@@ -65,7 +65,7 @@ for channel_idx, (row, col) in enumerate(active_channels):
         plt.tight_layout()
         plt.show(block=False)
         plt.pause(0.01)  # Pause for 1 second before moving to the next channel
-        plt.savefig(f"./plots/v2/channel_{row}_{col}.png")
+        plt.savefig(f"./plots/v3/channel_{row}_{col}.png")
 
 plt.ioff()  # Disable interactive mode
 plt.show()  # Keep the final graph displayed until closed

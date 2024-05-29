@@ -119,7 +119,7 @@ def load_data(file_path, active_channels):
             baseline_signal, new_recording_length = get_baseline(
                 signal, seizures, recording_length
             )
-            if keep_trace(baseline_signal, 0.065):
+            if keep_trace(baseline_signal, 0.063):
                 signals.append(baseline_signal)
     return signals
 
@@ -189,12 +189,21 @@ def train_model(
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
     print("Training model...")
-    table = ProgressTable(["Epoch", "Step"])
+    table = ProgressTable(
+        pbar_embedded=False,
+        pbar_style="angled alt green red",
+    )
+    table.column_width = 15
     table.add_column("Loss")
-    for epoch in range(num_epochs):
-        table["Epoch"] = f"{epoch+1}/{num_epochs}"
+    for epoch in table(num_epochs, show_throughput=False, show_eta=True):
+        table["epoch"] = epoch
         running_loss = 0.0
-        for i, (inputs,) in enumerate(dataloader):
+        for i, (inputs,) in table(
+            enumerate(dataloader),
+            total=len(dataloader),
+            show_throughput=False,
+            show_eta=True,
+        ):
             inputs = inputs.to(device)
             optimizer.zero_grad()
 
@@ -204,6 +213,13 @@ def train_model(
             optimizer.step()
 
             running_loss += loss.item()
+            table.update("Train loss", loss.item(), aggregate="mean", color="blue")
+            table.update(
+                "Running loss",
+                running_loss / (i + 1),
+                aggregate="mean",
+                color="blue bold",
+            )
             table["Step"] = f"{i+1}/{len(dataloader)}"
             table["Loss"] = loss.item()
 
@@ -240,14 +256,14 @@ def main():
     active_channels = {}
     for file in os.listdir(folder)[:5]:
         print(file)
-        if file == test_file.split("/")[-1]:
+        if file == test_file.split("/")[-1] or "100" not in file:
             print("skip")
             continue
         full_path = folder + "/" + file
         active_channels[full_path] = get_active_channels(full_path)
     print(f"Number of active channels: {len(active_channels)}")
-    segment_length = 50
-    num_epochs = 10
+    segment_length = 100
+    num_epochs = 5
     batch_size = 32
     learning_rate = 0.0001
 
