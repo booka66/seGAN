@@ -16,31 +16,66 @@ def get_channels(file_path):
     return rows, cols
 
 
-def get_channel_signal_without_seizures(signal, seizures):
-    print("Seizures:", seizures)
+def keep_trace(signal, threshold):
+    """
+    Returns true if all of the data in the signal is below the threshold.
+
+    Args:
+        signal (list): The signal to clean.
+        threshold (float): The threshold value to ignore.
+
+    Returns:
+        bool: True if all of the data in the signal is below the threshold, False otherwise.
+    """
+
+    # Check that threshold is a number
+    if not isinstance(threshold, (int, float)):
+        raise ValueError("Threshold must be a number")
+
+    # Check if all values in the signal are within the absolute value of the threshold don't use numpy
+    for value in signal:
+        if abs(value) > threshold:
+            return False
+
+    return True
+
+
+def get_baseline(signal, seizures, recording_length):
+    # print(f"Signal length: {len(signal)}")
+    # print("Seizures:", seizures)
     if type(seizures) == np.float64:
-        return signal
+        return signal, len(signal)
     if len(seizures) == 0:
-        return signal
+        return signal, len(signal)
+
+    samples_per_second = len(signal) / recording_length
+    buffer = 30 * samples_per_second
 
     if len(seizures[0]) == 1:
-        print("YOU FOUND IT")
-        print("Seizures:", seizures)
-        start = int(seizures[0][0])
-        stop = int(seizures[1][0])
-        return np.concatenate((signal[:start], signal[stop:]))
+        # print("YOU FOUND IT")
+        # print("Seizures:", seizures)
+        start = max(0, int(seizures[0][0] * samples_per_second - buffer))
+        stop = min(len(signal), int(seizures[1][0] * samples_per_second + buffer))
+        new_signal = np.concatenate((signal[:start], signal[stop:]))
+        return new_signal, len(new_signal)
 
     signal_segments = []
     prev_stop = 0
 
     for seizure in seizures:
-        start = int(seizure[0])
-        stop = int(seizure[1])
+        start = max(0, int(seizure[0] * samples_per_second - buffer))
+        stop = min(len(signal), int(seizure[1] * samples_per_second + buffer))
         signal_segments.append(signal[prev_stop:start])
         prev_stop = stop
 
     signal_segments.append(signal[prev_stop:])
-    return np.concatenate(signal_segments)
+    # print(f"Adjusted signal length: {sum(len(s) for s in signal_segments)}")
+    new_signal = np.concatenate(signal_segments)
+
+    start_index = int(20 * samples_per_second)
+    new_signal = new_signal[start_index:]
+
+    return new_signal, len(new_signal)
 
 
 def get_data(file_path):
@@ -59,8 +94,7 @@ def get_data(file_path):
         )
 
         end_time_1 = perf_counter()
-        print(
-            f"State extraction complete in {end_time_1 - start_time_1} seconds")
+        print(f"State extraction complete in {end_time_1 - start_time_1} seconds")
 
         total_channels = int(total_channels)
         sampling_rate = float(sampling_rate)
@@ -74,8 +108,7 @@ def get_data(file_path):
 
         rows, cols = get_channels(file_path)
         active_channels = list(zip(rows, cols))
-        zero_indexed_active_channels = [
-            (r - 1, c - 1) for r, c in active_channels]
+        zero_indexed_active_channels = [(r - 1, c - 1) for r, c in active_channels]
 
         return (
             data,
@@ -111,11 +144,9 @@ def save_channel_data(
             channel_group.create_dataset(
                 "SzEventsTimes", data=channel_info["SzEventsTimes"]
             )
-            channel_group.create_dataset(
-                "SE_List", data=channel_info["SE_List"])
+            channel_group.create_dataset("SE_List", data=channel_info["SE_List"])
             channel_group.create_dataset("samplingRate", data=sampling_rate)
-            channel_group.create_dataset(
-                "recordingLength", data=recording_length)
+            channel_group.create_dataset("recordingLength", data=recording_length)
 
     print(f"Channel dataset saved to {output_file}")
 
@@ -145,7 +176,7 @@ def load_channel_data(file_path: str, row: int, col: int):
         col (int): The column number of the channel to load.
 
     Returns:
-        tuple: A tuple containing the signal, seizures event list (start, stop, strength), and SE event list (start, stop) for the channel.
+        tuple: A tuple containing the signal, seizures event list (start, stop, strength), SE event list (start, stop), recording length, and sampling rate for the channel.
         None: If the channel is not found in the dataset.
 
     Raises:
@@ -160,7 +191,9 @@ def load_channel_data(file_path: str, row: int, col: int):
             signal = [x[0] for x in signal]
             seizures = channel_group["SzEventsTimes"][()]
             se = channel_group["SE_List"][()]
-            return signal, seizures, se
+            recording_length = channel_group["recordingLength"][()]
+            sampling_rate = channel_group["samplingRate"][()]
+            return signal, seizures, se, recording_length, sampling_rate
         else:
             print(f"Channel ({row}, {col}) not found in the dataset.")
             return None

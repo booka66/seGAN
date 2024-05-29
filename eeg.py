@@ -3,7 +3,14 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, TensorDataset
 from tqdm import tqdm
-from dataIO import load_channel_data, get_active_channels
+from dataIO import (
+    keep_trace,
+    load_channel_data,
+    get_active_channels,
+    get_baseline,
+)
+from visualize_signals import plot_signal
+import numpy as np
 
 device = torch.device("mps")
 
@@ -99,24 +106,45 @@ def find_factor(n):
 
 def load_data(file_path, active_channels):
     signals = []
-    for row, col in active_channels:
-        signal, seizures, se = load_channel_data(file_path, row, col)
+    for row, col in tqdm(active_channels, desc="Loading data"):
+        signal, seizures, se, recording_length, _ = load_channel_data(
+            file_path, row, col
+        )
         if signal is not None:
-            signals.append(signal)
+            baseline_signal, new_recording_length = get_baseline(
+                signal, seizures, recording_length
+            )
+            if keep_trace(baseline_signal, 0.06):
+                # plot_signal(baseline_signal, seizures, new_recording_length)
+                signals.append(baseline_signal)
     return signals
 
 
-def create_dataset(signals, segment_length):
+def pad_signals(signals, segment_length):
+    max_length = max(len(signal) for signal in signals)
+    padded_signals = []
+    for signal in signals:
+        padded_signal = np.pad(signal, (0, max_length - len(signal)), "constant")
+        padded_signals.append(padded_signal)
+    return np.array(padded_signals, dtype=np.float32), max_length
+
+
+def create_dataset(signals, segment_length, max_length):
     X = []
     for signal in signals:
-        for i in range(0, len(signal), segment_length):
-            segment = signal[i : i + segment_length]
-            if len(segment) == segment_length:
-                X.append(segment)
-    X = torch.tensor(X, dtype=torch.float32)
-    X = X.view(
-        -1, len(signals), segment_length
-    )  # Reshape to (batch_size, num_channels, segment_length)
+        num_segments = max_length // segment_length
+        for i in range(num_segments):
+            segment = signal[i * segment_length : (i + 1) * segment_length]
+            if len(segment) < segment_length:
+                segment = np.pad(
+                    segment, (0, segment_length - len(segment)), "constant"
+                )
+            X.append(segment)
+    X = np.array(X, dtype=np.float32)
+    X = torch.from_numpy(X)
+    num_channels = len(signals)
+    num_segments = len(X) // num_channels
+    X = X.view(num_segments, num_channels, segment_length)
     return X
 
 
@@ -126,13 +154,13 @@ def train_model(
     print(f"Training model with {len(active_channels)} active channels")
     print(f"Segment length: {segment_length}, Number of epochs: {num_epochs}")
     print(f"Batch size: {batch_size}, Learning rate: {learning_rate}")
-    print("Loading data...")
     signals = load_data(file_path, active_channels)
-    num_channels = len(active_channels)
+    num_channels = len(signals)
 
-    X = create_dataset(signals, segment_length)
+    signals, max_length = pad_signals(signals, segment_length)
+    X = create_dataset(signals, segment_length, max_length)
     X = X.to(device)
-    print(f"Data shape: {X.shape}")
+    print(f"New number of signals: {len(signals)}")
 
     dataset = TensorDataset(X)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
@@ -189,9 +217,7 @@ def detect_anomalies(model, data, threshold):
 
 
 def main():
-    file_path = (
-        "/Users/booka66/seGAN/mv_data/Slice3_0Mg_13-9-20_resample_100_channel_data.h5"
-    )
+    file_path = "./mv_data/Slice3_0Mg_13-9-20_resample_100_channel_data.h5"
     active_channels = get_active_channels(file_path)
     num_channels = len(active_channels)
     print(f"Number of active channels: {num_channels}")
