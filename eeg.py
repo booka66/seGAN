@@ -1,3 +1,5 @@
+import os
+import sys
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -50,14 +52,14 @@ class EEGformerAutoencoder(nn.Module):
     def __init__(self, segment_length):
         super(EEGformerAutoencoder, self).__init__()
         hidden_channels = 128
-        nhead = find_factor(hidden_channels)
+        nhead = 8
         print(f"Hidden channels: {hidden_channels}, nhead: {nhead}")
         assert (
             hidden_channels % nhead == 0
         ), "hidden_channels must be divisible by nhead"
 
         self.encoder = nn.Sequential(
-            nn.Conv1d(1, hidden_channels, 10),  # Use 1 input channel
+            nn.Conv1d(1, hidden_channels, 10),
             DepthwiseConv1d(hidden_channels, hidden_channels, 10),
             DepthwiseConv1d(hidden_channels, hidden_channels, 10),
         )
@@ -87,7 +89,7 @@ class EEGformerAutoencoder(nn.Module):
         self.decoder = nn.Sequential(
             nn.ConvTranspose1d(hidden_channels, hidden_channels, 10),
             nn.ConvTranspose1d(hidden_channels, hidden_channels, 10),
-            nn.ConvTranspose1d(hidden_channels, 1, 10),  # Use 1 output channel
+            nn.ConvTranspose1d(hidden_channels, 1, 10),
         )
 
     def forward(self, x):
@@ -117,7 +119,7 @@ def load_data(file_path, active_channels):
             baseline_signal, new_recording_length = get_baseline(
                 signal, seizures, recording_length
             )
-            if keep_trace(baseline_signal, 0.06):
+            if keep_trace(baseline_signal, 0.065):
                 signals.append(baseline_signal)
     return signals
 
@@ -129,6 +131,16 @@ def pad_signals(signals, segment_length):
         padded_signal = np.pad(signal, (0, max_length - len(signal)), "constant")
         padded_signals.append(padded_signal)
     return np.array(padded_signals, dtype=np.float32), max_length
+
+
+def normalize_signals(signals):
+    normalized_signals = []
+    for signal in signals:
+        normalized_signal = (signal - np.min(signal)) / (
+            np.max(signal) - np.min(signal)
+        )
+        normalized_signals.append(normalized_signal)
+    return normalized_signals
 
 
 def create_dataset(signals, segment_length, max_length):
@@ -148,14 +160,21 @@ def create_dataset(signals, segment_length, max_length):
 
 
 def train_model(
-    file_path, active_channels, segment_length, num_epochs, batch_size, learning_rate
+    all_active_channels,
+    segment_length,
+    num_epochs,
+    batch_size,
+    learning_rate,
 ):
-    print(f"Training model with {len(active_channels)} active channels")
+    print(f"Training model with {len(all_active_channels)} active channels")
     print(f"Segment length: {segment_length}, Number of epochs: {num_epochs}")
     print(f"Batch size: {batch_size}, Learning rate: {learning_rate}")
-    signals = load_data(file_path, active_channels)
+    signals = []
+    for file_path, active_channels in all_active_channels.items():
+        signals.extend(load_data(file_path, active_channels))
     num_signals = len(signals)
 
+    signals = normalize_signals(signals)
     signals, max_length = pad_signals(signals, segment_length)
     X = create_dataset(signals, segment_length, max_length)
     X = X.unsqueeze(1)  # Add a channel dimension
@@ -206,15 +225,6 @@ def load_model(model_class, model_path, segment_length):
     return model
 
 
-def detect_anomalies(model, data, threshold):
-    data = data.to(device)
-    with torch.no_grad():
-        reconstructed_data = model(data)
-        reconstruction_errors = torch.mean((data - reconstructed_data) ** 2, dim=(1, 2))
-        anomalies = reconstruction_errors > threshold
-    return anomalies
-
-
 def detect_seizures(model, segment, threshold):
     segment = torch.from_numpy(segment).float().unsqueeze(0).unsqueeze(0).to(device)
     with torch.no_grad():
@@ -225,16 +235,23 @@ def detect_seizures(model, segment, threshold):
 
 
 def main():
-    file_path = "./mv_data/Slice3_0Mg_13-9-20_resample_100_channel_data.h5"
-    active_channels = get_active_channels(file_path)
+    test_file = "Slice3_0Mg_13-9-20_resample_100_channel_data.h5"
+    folder = "./mv_data"
+    active_channels = {}
+    for file in os.listdir(folder)[:5]:
+        print(file)
+        if file == test_file.split("/")[-1]:
+            print("skip")
+            continue
+        full_path = folder + "/" + file
+        active_channels[full_path] = get_active_channels(full_path)
     print(f"Number of active channels: {len(active_channels)}")
     segment_length = 50
     num_epochs = 10
     batch_size = 32
-    learning_rate = 0.001
+    learning_rate = 0.0001
 
     trained_model = train_model(
-        file_path,
         active_channels,
         segment_length,
         num_epochs,
@@ -242,7 +259,7 @@ def main():
         learning_rate,
     )
 
-    model_save_path = "eegformer_autoencoder.pth"
+    model_save_path = "eegformer_autoencoder_v3.pth"
     save_model(trained_model, model_save_path)
     print(f"Model saved to {model_save_path}")
 

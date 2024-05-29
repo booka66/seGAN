@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 device = torch.device("mps")
 
 file_path = "./mv_data/Slice3_0Mg_13-9-20_resample_100_channel_data.h5"
-model_save_path = "eegformer_autoencoder_v1.pth"
+model_save_path = "eegformer_autoencoder_v2.pth"
 
 active_channels = get_active_channels(file_path)
 num_channels = len(active_channels)
@@ -31,7 +31,7 @@ ax.set_title("Real-time Seizure Detection")
 plt.ion()  # Enable interactive mode
 
 # Iterate over active channels and detect seizures
-for channel_idx, (row, col) in enumerate(active_channels[2:]):
+for channel_idx, (row, col) in enumerate(active_channels):
     print(f"Processing channel {channel_idx + 1}/{num_channels}")
     signal, seizures, se, recording_length, _ = load_channel_data(file_path, row, col)
     signal = np.array(signal)
@@ -65,7 +65,7 @@ for channel_idx, (row, col) in enumerate(active_channels[2:]):
         plt.tight_layout()
         plt.show(block=False)
         plt.pause(0.01)  # Pause for 1 second before moving to the next channel
-        plt.savefig(f"./plots/v2_channel_{row}_{col}.png")
+        plt.savefig(f"./plots/v2/channel_{row}_{col}.png")
 
 plt.ioff()  # Disable interactive mode
 plt.show()  # Keep the final graph displayed until closed
