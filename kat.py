@@ -15,6 +15,7 @@ from dataIO import (
 from visualize_signals import plot_signal
 import numpy as np
 from progress_table import ProgressTable
+import multiprocessing as mp
 
 device = torch.device("mps")
 
@@ -110,14 +111,43 @@ def find_factor(n):
     return n
 
 
+def load_channel_data_wrapper(args):
+    return load_channel_data(*args)
+
+
 def load_data(file_path, active_channels):
+    pool = mp.Pool(processes=mp.cpu_count())
+    args_list = [(file_path, row, col) for row, col in active_channels]
+
+    table = ProgressTable(
+        pbar_embedded=False,
+        pbar_style="angled alt green red",
+    )
+    table.column_width = 100
+
+    results = []
+    for i, result in table(
+        enumerate(pool.imap_unordered(load_channel_data_wrapper, args_list)),
+        total=len(args_list),
+        show_throughput=False,
+        show_eta=True,
+    ):
+        results.append(result)
+        table.update("Progress", f"{i+1}/{len(args_list)}", color="yellow")
+
+    table.close()
+
+    pool.close()
+    pool.join()
+
     signals = []
-    for row, col in tqdm(active_channels, desc="Loading data"):
-        signal, _, _, recording_length, _ = load_channel_data(file_path, row, col)
-        signal = remove_first_n_seconds(signal, 20, recording_length)
+    for signal, _, _, recording_length, _ in results:
         if signal is not None:
-            downsampled_signal = downsample_signal(signal, 7)
-            signals.append(downsampled_signal)
+            signal = remove_first_n_seconds(signal, 20, recording_length)
+            if signal is not None:
+                downsampled_signal = downsample_signal(signal, 7)
+                signals.append(downsampled_signal)
+
     return signals
 
 
@@ -225,9 +255,14 @@ def train_model(
 
 def cluster_latent_representations(model, signals, segment_length, n_clusters):
     latent_representations = []
-    for signal in signals:
+    table = ProgressTable(
+        pbar_embedded=False,
+        pbar_style="angled alt green red",
+    )
+    table.column_width = 100
+    for signal in table(signals, show_throughput=False, show_eta=True):
         num_segments = len(signal) // segment_length
-        for i in range(num_segments):
+        for i in table(range(num_segments), show_throughput=False, show_eta=True):
             segment = signal[i * segment_length : (i + 1) * segment_length]
             segment = (
                 torch.from_numpy(segment).float().unsqueeze(0).unsqueeze(0).to(device)
@@ -235,6 +270,9 @@ def cluster_latent_representations(model, signals, segment_length, n_clusters):
             with torch.no_grad():
                 _, latent = model(segment)
                 latent_representations.append(latent.cpu().numpy().flatten())
+            table.update("Segment", i + 1, color="yellow")
+        table.next_row()
+    table.close()
 
     latent_representations = np.array(latent_representations)
     kmeans = KMeans(n_clusters=n_clusters, random_state=42).fit(latent_representations)
@@ -274,8 +312,8 @@ def main():
         full_path = folder + "/" + file
         active_channels[full_path] = get_active_channels(full_path)
     print(f"Number of active channels: {len(active_channels)}")
-    segment_length = 500
-    num_epochs = 3
+    segment_length = 50
+    num_epochs = 1
     batch_size = 16
     learning_rate = 0.0001
     n_clusters = 4
