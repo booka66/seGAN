@@ -49,7 +49,7 @@ class TransformerEncoder(nn.Module):
 class EEGformerAutoencoder(nn.Module):
     def __init__(self, segment_length):
         super(EEGformerAutoencoder, self).__init__()
-        hidden_channels = 128  # Fixed number of hidden channels
+        hidden_channels = 128
         nhead = find_factor(hidden_channels)
         print(f"Hidden channels: {hidden_channels}, nhead: {nhead}")
         assert (
